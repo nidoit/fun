@@ -90,7 +90,7 @@ fi
 # ----------------------------- 1) 도구 -----------------------------
 step "1/6 필요한 도구 확인"
 
-for pkg in base-devel git libarchive zstd curl; do
+for pkg in base-devel git libarchive zstd curl pacman-contrib pkgfile fakeroot; do
   pacman -Qq "$pkg" &>/dev/null || sudo pacman -S --needed --noconfirm "$pkg"
 done
 
@@ -127,6 +127,16 @@ ok "debtap 준비됨"
 
 step "debtap 패키지 DB 업데이트 (sudo debtap -u)"
 sudo debtap -u
+
+# debtap -u 가 "완료"라고 해도 DB 파일이 안 만들어지는 경우가 있다 (pactree 없음 등).
+# 이 상태로 변환하면 3단계에서 'You must run at least once debtap -u' 로 실패하므로 여기서 미리 확인한다.
+if [[ ! -s /var/cache/debtap/base-packages ]]; then
+  warn "debtap DB 가 불완전합니다: /var/cache/debtap/base-packages 없음"
+  warn "  - pactree 존재 여부: $(command -v pactree || echo '없음 (pacman-contrib 필요)')"
+  warn "  - /etc/pacman.conf 에 공식 저장소 외 저장소(예: [blunux2])가 있으면 잠시 주석 처리 후 'sudo debtap -u' 를 다시 실행해 보세요."
+  warn "  - 그래도 안 되면: sudo rm -rf /var/cache/debtap && sudo debtap -u"
+  die "debtap DB 준비 실패. 위를 조치한 뒤 ./han.sh 를 다시 실행하세요 (받은 deb 는 재사용됩니다)."
+fi
 ok "debtap DB 업데이트 완료"
 
 # ----------------------------- 2) 다운로드 -----------------------------
