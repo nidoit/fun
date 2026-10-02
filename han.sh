@@ -16,7 +16,7 @@
 #
 # 단계:
 #   1) 의존 도구 확인 (yay/paru, debtap, bsdtar, zstd)
-#   2) deb 다운로드 (이어받기 + 무결성 검사)
+#   2) deb 다운로드 (arter97.com, 이어받기 + 무결성 검사)
 #   3) debtap 으로 Arch 패키지 변환 (질문 없이)
 #   4) .INSTALL 교정 + license=custom 으로 재패키징
 #   5) pacman -U 설치
@@ -27,9 +27,7 @@ set -euo pipefail
 # ----------------------------- 설정 -----------------------------
 PKGNAME="hoffice"
 DEB_NAME="hoffice_11.20.0.1520_amd64.deb"
-DEB_URL="https://cdn.hancom.com/pds/hnc/DOWN/gooroom/${DEB_NAME}"
-DEB_HOST="cdn.hancom.com"
-DEB_REFERER="https://www.hancom.com/cs_center"
+DEB_URL="${DEB_URL:-https://arter97.com/.191066/${DEB_NAME}}"   # 환경변수 DEB_URL 로 덮어쓰기 가능
 DEB_MIN_BYTES=1000000000            # 약 1.3GB 짜리라 1GB 미만이면 끊긴 파일
 
 KIME_URL="https://github.com/Riey/kime/releases/latest/download/libkime-qt-5.11.3.so"
@@ -143,8 +141,7 @@ if [[ -n "$USER_DEB" ]]; then
 fi
 
 download() {
-  curl -H "Host: ${DEB_HOST}" -H "Referer: ${DEB_REFERER}" \
-       -fL -C - --retry 5 --retry-delay 3 --retry-all-errors \
+  curl -fL -C - --retry 5 --retry-delay 3 --retry-all-errors \
        -o "$DEB_NAME" "$DEB_URL"
 }
 
@@ -157,6 +154,10 @@ deb_ok() {
 if deb_ok; then
   ok "이미 받은 파일이 정상입니다. 다운로드 생략"
 else
+  # 이전 시도에서 남은 쓰레기 파일(에러 페이지 등)에서 이어받지 않도록 정리
+  if [[ -z "$USER_DEB" && -f "$DEB_NAME" ]] && (( $(size_of "$DEB_NAME") < 1048576 )); then
+    rm -f "$DEB_NAME"
+  fi
   tries=0
   until download && deb_ok; do
     # 서버가 deb 대신 아주 작은 응답(에러 문구 등)을 준 경우: 재시도해도 소용없으니 바로 중단
@@ -167,7 +168,7 @@ else
       warn "서버가 deb 대신 $(size_of "$DEB_NAME") 바이트짜리 응답을 줬습니다. 내용:"
       head -c 300 "$DEB_NAME" >&2; echo >&2
       rm -f "$DEB_NAME"
-      die "CDN 직접 다운로드가 막힌 것 같습니다. 다른 경로로 받은 deb 를 './han.sh --deb /경로/${DEB_NAME}' 로 지정하세요."
+      die "이 URL 에서 deb 를 받을 수 없습니다 (삭제/이동/차단). 다른 경로로 받은 deb 를 './han.sh --deb /경로/${DEB_NAME}' 로 지정하세요."
     fi
     tries=$((tries + 1))
     (( tries >= 5 )) && die "다운로드 실패/손상. URL 이 막혔거나(404) 연결이 계속 끊깁니다. 로그를 확인하세요."
@@ -181,6 +182,8 @@ else
   done
   ok "다운로드 완료: $(numfmt --to=iec "$(size_of "$DEB_NAME")")"
 fi
+echo "   출처: $DEB_URL"
+echo "   sha256: $(sha256sum "$DEB_NAME" | cut -d' ' -f1)"
 
 # ----------------------------- 3) debtap 변환 -----------------------------
 step "3/6 debtap 으로 Arch 패키지 변환 (시간이 꽤 걸립니다)"
