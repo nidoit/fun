@@ -7,6 +7,7 @@
 # 옵션:
 #   --clean       설치 성공 후 작업 폴더(WORKDIR) 삭제
 #   --skip-kime   kime Qt 플러그인 복사 단계 생략
+#   --deb PATH    직접 받아둔 hoffice_*.deb 를 사용 (다운로드 단계 생략)
 #   -h, --help    도움말
 #
 # 환경변수:
@@ -52,15 +53,19 @@ ok()   { echo "${C_G} ✓${C_0} $*"; }
 warn() { echo "${C_Y} !${C_0} $*" >&2; }
 die()  { echo "${C_R} ✗ $*${C_0}" >&2; exit 1; }
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
-for arg in "$@"; do
-  case "$arg" in
+USER_DEB=""
+while (( $# )); do
+  case "$1" in
     --clean)     DO_CLEAN=1 ;;
     --skip-kime) DO_KIME=0 ;;
+    --deb)       shift; [[ -n "${1:-}" && -f "$1" ]] || die "--deb 뒤에 존재하는 .deb 파일 경로를 주세요."
+                 USER_DEB="$(realpath "$1")" ;;
     -h|--help)   usage ;;
-    *) die "알 수 없는 옵션: $arg (--help 참고)" ;;
+    *) die "알 수 없는 옵션: $1 (--help 참고)" ;;
   esac
+  shift
 done
 
 # ----------------------------- 사전 검사 -----------------------------
@@ -129,7 +134,13 @@ ok "debtap DB 업데이트 완료"
 # ----------------------------- 2) 다운로드 -----------------------------
 step "2/6 deb 다운로드 (${DEB_NAME})"
 
-size_of() { stat -c %s "$1" 2>/dev/null || echo 0; }
+size_of() { stat -L -c %s "$1" 2>/dev/null || echo 0; }
+
+# 직접 받아둔 deb 를 쓰는 경우 (--deb PATH)
+if [[ -n "$USER_DEB" ]]; then
+  ln -sf "$USER_DEB" "$DEB_NAME"
+  ok "지정한 deb 사용: $USER_DEB"
+fi
 
 download() {
   curl -H "Host: ${DEB_HOST}" -H "Referer: ${DEB_REFERER}" \
@@ -148,6 +159,16 @@ if deb_ok; then
 else
   tries=0
   until download && deb_ok; do
+    # 서버가 deb 대신 아주 작은 응답(에러 문구 등)을 준 경우: 재시도해도 소용없으니 바로 중단
+    if [[ -n "$USER_DEB" ]]; then
+      die "--deb 로 지정한 파일이 정상 deb 가 아닙니다 (1GB 미만이거나 손상)."
+    fi
+    if [[ -f "$DEB_NAME" ]] && (( $(size_of "$DEB_NAME") < 1048576 )); then
+      warn "서버가 deb 대신 $(size_of "$DEB_NAME") 바이트짜리 응답을 줬습니다. 내용:"
+      head -c 300 "$DEB_NAME" >&2; echo >&2
+      rm -f "$DEB_NAME"
+      die "CDN 직접 다운로드가 막힌 것 같습니다. 다른 경로로 받은 deb 를 './han.sh --deb /경로/${DEB_NAME}' 로 지정하세요."
+    fi
     tries=$((tries + 1))
     (( tries >= 5 )) && die "다운로드 실패/손상. URL 이 막혔거나(404) 연결이 계속 끊깁니다. 로그를 확인하세요."
     # 크기는 충분한데 ar 구조가 깨진 경우: 이어받기로는 못 고치므로 지우고 처음부터
