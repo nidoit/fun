@@ -90,7 +90,7 @@ fi
 # ----------------------------- 1) 도구 -----------------------------
 step "1/6 필요한 도구 확인"
 
-for pkg in base-devel git libarchive zstd curl pacman-contrib pkgfile fakeroot; do
+for pkg in base-devel git libarchive zstd curl pacman-contrib pkgfile fakeroot gawk binutils file; do
   pacman -Qq "$pkg" &>/dev/null || sudo pacman -S --needed --noconfirm "$pkg"
 done
 
@@ -142,6 +142,40 @@ if (( ext_lines < 20 )); then
   die "debtap DB 준비 실패. 위를 조치한 뒤 ./han.sh 를 다시 실행하세요 (받은 deb 는 재사용됩니다)."
 fi
 ok "debtap DB 업데이트 완료"
+
+# ---- debtap 본체가 변환 전에 하는 사전조건 검사 5개를 그대로 재현해서, 어느 것이 실패하는지 미리 확인 ----
+# (debtap -u 가 성공해도 "You must run at least once debtap -u" 가 나오는 경우를 진단/우회하기 위함)
+DEBTAP_CMD="$(command -v debtap)"
+failed=()
+ls /var/cache/pkgfile 2>/dev/null | grep -E '*.files?(.[[:digit:]]{3})' >/dev/null || failed+=("pkgfile-cache")
+ls /var/cache/debtap/*-packages-files >/dev/null 2>&1 || failed+=("packages-files")
+[[ -e /var/cache/debtap/extended-base-packages-list ]] || failed+=("extended-base-packages-list")
+[[ -e /var/cache/debtap/aur-packages ]]                || failed+=("aur-packages")
+[[ -e /var/cache/debtap/virtual-packages ]]            || failed+=("virtual-packages")
+
+if (( ${#failed[@]} )); then
+  warn "debtap 사전조건 검사 실패 항목: ${failed[*]}"
+  warn "  /var/cache/pkgfile 내용: $(ls /var/cache/pkgfile 2>&1 | head -8 | tr '\n' ' ')"
+  warn "  /var/cache/debtap  내용: $(ls /var/cache/debtap 2>&1 | head -12 | tr '\n' ' ')"
+
+  if [[ "${failed[*]}" == "pkgfile-cache" ]] && [[ -n "$(ls /var/cache/pkgfile 2>/dev/null)" ]]; then
+    # pkgfile 캐시는 있는데 debtap 의 파일명 정규식(구형 pkgfile 형식 기준)과 안 맞는 경우:
+    # 그 검사 하나만 뺀 복사본을 만들어 쓴다 (원본 /usr/bin/debtap 은 건드리지 않음).
+    warn "pkgfile 캐시는 존재하지만 debtap 의 파일명 검사와 형식이 달라 보입니다. 해당 검사만 제외한 복사본으로 변환합니다."
+    read -r -d '' NEEDLE <<'NEEDLE_EOF' || true
+[[ ! $(ls /var/cache/pkgfile | grep -E '*.files?(.[[:digit:]]{3})' 2> /dev/null) ]] || 
+NEEDLE_EOF
+    NEEDLE=${NEEDLE%$'\n'}
+    content="$(cat "$DEBTAP_CMD"; echo x)"; content=${content%x}
+    [[ "$content" == *"$NEEDLE"* ]] || die "이 debtap 버전에서는 해당 검사 줄을 찾지 못해 자동 우회할 수 없습니다. 위 목록을 알려주세요."
+    printf '%s' "${content/"$NEEDLE"/}" > "$WORKDIR/debtap-patched"
+    chmod +x "$WORKDIR/debtap-patched"
+    DEBTAP_CMD="$WORKDIR/debtap-patched"
+    ok "복사본 생성: $DEBTAP_CMD"
+  else
+    die "debtap DB 가 불완전합니다 (${failed[*]}). 위 목록을 확인하고, 필요하면 'sudo rm -rf /var/cache/debtap && sudo env LC_ALL=C debtap -u' 후 다시 실행하세요."
+  fi
+fi
 
 # ----------------------------- 2) 다운로드 -----------------------------
 step "2/6 deb 다운로드 (${DEB_NAME})"
@@ -204,7 +238,7 @@ step "3/6 debtap 으로 Arch 패키지 변환 (시간이 꽤 걸립니다)"
 
 rm -f ./${PKGNAME}-*.pkg.tar.*
 # -Q : 모든 질문 생략 (패키지명은 deb 이름에서 가져옴, license 는 아래에서 custom 으로 교정)
-LC_ALL=C debtap -Q "$DEB_NAME"
+LC_ALL=C "$DEBTAP_CMD" -Q "$DEB_NAME"
 
 shopt -s nullglob
 converted=( ./${PKGNAME}-*.pkg.tar.* )
