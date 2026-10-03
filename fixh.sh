@@ -1,3 +1,3 @@
-pacman -Q xdg-utils
-grep -i -A6 'hoffice' /var/log/pacman.log | grep -i -E 'scriptlet|error|warning' | tail -10
-grep -H -E '^(Exec|TryExec|Icon|NoDisplay|OnlyShowIn|NotShowIn|Hidden)=' $(pacman -Ql hoffice | awk '/\.desktop$/{print $2}')
+sudo pacman -S --needed xdg-utils
+sudo gtk-update-icon-cache -f /usr/share/icons/hicolor
+kbuildsycoca6 --noincremental
